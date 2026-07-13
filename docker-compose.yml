@@ -1,6 +1,10 @@
 services:
   backend:
     build: ./backend
+    # Reachable by the frontend (nginx proxies /api -> http://backend:8000)
+    # over the internal network. Not published to the host.
+    expose:
+      - "8000"
     volumes:
       - db-data:/app/data
     restart: unless-stopped
@@ -12,8 +16,11 @@ services:
 
   frontend:
     build: ./frontend
+    # Publish container port 80 without a fixed host port -- the deployment CLI
+    # assigns/manages the host port itself. (Locally, find the mapped port with
+    # `docker compose port frontend 80`.)
     ports:
-      - "8080:80"
+      - "80"
     depends_on:
       backend:
         condition: service_healthy
