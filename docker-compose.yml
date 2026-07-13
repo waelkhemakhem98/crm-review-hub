@@ -1,10 +1,10 @@
 services:
   backend:
     build: ./backend
-    # Reachable by the frontend (nginx proxies /api -> http://backend:8000)
-    # over the internal network. Not published to the host.
-    expose:
-      - "8000"
+    # No published or exposed port on purpose: the frontend's nginx reaches it
+    # at http://backend:8000 over the internal compose network (service-name
+    # DNS works without `expose`). Keeping it port-less leaves the frontend as
+    # the single app port for the deployment CLI to route to.
     volumes:
       - db-data:/app/data
     restart: unless-stopped
