@@ -7,6 +7,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+# Sub-path mount point injected by the deploy host (e.g. "/crm-review-hub").
+# vite.config.js reads it as `base`; empty -> builds for the root "/".
+ARG VITE_BASE_PATH
+ENV VITE_BASE_PATH=${VITE_BASE_PATH}
 RUN npm run build
 
 FROM nginx:alpine

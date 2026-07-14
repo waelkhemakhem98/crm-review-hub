@@ -1,15 +1,22 @@
-/** Thin fetch wrapper around the FastAPI backend. Relative paths only --
- * nginx proxies /api to the backend container in production, and Vite's dev
- * server can be configured with the same proxy for local development. */
+/** Thin fetch wrapper around the FastAPI backend.
+ *
+ * The app may be served at the root ("/") in local dev, or under a sub-path
+ * (e.g. "/crm-review-hub/") when deployed behind the demo host. Vite exposes
+ * that mount point as import.meta.env.BASE_URL, so we prefix every request
+ * with it -- otherwise the browser would call "/api/..." at the domain root,
+ * which isn't routed to this app under a sub-path. */
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, ""); // "/crm-review-hub" or ""
+const url = (path) => `${BASE}${path}`;
 
 async function getJSON(path) {
-  const res = await fetch(path);
+  const res = await fetch(url(path));
   if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
   return res.json();
 }
 
 async function putJSON(path, body) {
-  const res = await fetch(path, {
+  const res = await fetch(url(path), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -19,7 +26,7 @@ async function putJSON(path, body) {
 }
 
 async function postJSON(path, body) {
-  const res = await fetch(path, {
+  const res = await fetch(url(path), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -36,7 +43,7 @@ export const api = {
   saveInactiveDecision: (accountid, patch) => putJSON(`/api/inactive/decisions/${accountid}`, patch),
   bulkSaveInactiveDecisions: (accountids, decision, reviewer) =>
     postJSON("/api/inactive/decisions/bulk", { accountids, decision, reviewer }),
-  exportInactiveXlsxUrl: () => "/api/inactive/export.xlsx",
+  exportInactiveXlsxUrl: () => url("/api/inactive/export.xlsx"),
 
   // -- shared --
   fetchAccountContacts: (accountid) => getJSON(`/api/accounts/${accountid}/contacts`),
@@ -50,5 +57,5 @@ export const api = {
     postJSON("/api/duplicates/decisions/bulk", { accountids, decision, reviewer }),
   setPrimaryChoice: (clusterId, accountid, reviewer) =>
     putJSON(`/api/duplicates/primary-choices/${clusterId}`, { accountid, reviewer }),
-  exportDuplicatesXlsxUrl: () => "/api/duplicates/export.xlsx",
+  exportDuplicatesXlsxUrl: () => url("/api/duplicates/export.xlsx"),
 };
