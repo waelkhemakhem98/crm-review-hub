@@ -1,89 +1,39 @@
 import React, { useState } from "react";
-import { api } from "../api.js";
-import { resolveIndustry } from "../industryLabels.js";
 
 const DECISIONS = ["", "Merge", "Not a duplicate", "Keep separate"];
 
 function MemberDetails({ m }) {
-  const [contacts, setContacts] = useState(null); // null=not loaded, []=loaded/empty
-  const [loadingContacts, setLoadingContacts] = useState(false);
-  const [contactsError, setContactsError] = useState("");
-  const [showContacts, setShowContacts] = useState(false);
-
-  function toggleContacts() {
-    if (showContacts) { setShowContacts(false); return; }
-    setShowContacts(true);
-    if (contacts === null && !loadingContacts) {
-      setLoadingContacts(true);
-      api.fetchAccountContacts(m.accountid)
-        .then((list) => setContacts(list))
-        .catch((err) => setContactsError(String(err)))
-        .finally(() => setLoadingContacts(false));
-    }
-  }
-
   const fields = [
-    ["Industry", resolveIndustry(m.industrycode)],
+    ["Email", m.emailaddress1 || "-"],
+    ["Job title", m.jobtitle || "-"],
+    ["Parent account", m.parent_account_name || "-"],
     ["Phone", m.telephone1 || "-"],
-    ["Street", m.address1_line1 || "-"],
-    ["City", m.address1_city || "-"],
-    ["State/Province", m.address1_stateorprovince || "-"],
-    ["Postal", m.address1_postalcode || "-"],
-    ["Country", m.address1_country || "-"],
-    ["Open deals", m.opendeals],
-    ["Open revenue", m.openrevenue],
-    ["Status code", m.statuscode],
+    ["LinkedIn", m.new_linkedinurl || "-"],
+    ["Engage ID", m.sp_engageid || "-"],
+    ["In opps", m.kpi_inhowmanyopps],
     ["Created", m.createdon || "-"],
-    ["Modified", m.modifiedon || "-"],
-    ["Account ID", m.accountid],
+    ["Contact ID", m.contactid],
+    ["Parent ID", m.parentcustomerid || "-"],
   ];
   return (
     <div className="member-details-wrap">
       <div className="member-details">
         {fields.map(([label, val]) => (
           <div key={label}>
-            <strong>{label}:</strong> {String(val)}
-          </div>
-        ))}
-        {m.websiteurl && (
-          <div>
-            <strong>Website:</strong>{" "}
-            <a href={m.websiteurl} target="_blank" rel="noreferrer">{m.websiteurl}</a>
-          </div>
-        )}
-      </div>
-      <div className="contacts-block">
-        <button className="contacts-toggle" onClick={toggleContacts}>
-          {showContacts ? "▾ Hide contacts" : "▸ Show contacts"}
-        </button>
-        {showContacts && (
-          <div className="contacts-list">
-            {loadingContacts && <span className="contacts-muted">Loading contacts&hellip;</span>}
-            {contactsError && <span className="section-error">Failed to load contacts: {contactsError}</span>}
-            {contacts && contacts.length === 0 && <span className="contacts-muted">No contacts.</span>}
-            {contacts && contacts.length > 0 && (
-              <table className="contacts-table">
-                <thead>
-                  <tr><th>Name</th><th>Email</th></tr>
-                </thead>
-                <tbody>
-                  {contacts.map((c, i) => (
-                    <tr key={i}>
-                      <td>{c.fullname || "-"}</td>
-                      <td>{c.email || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <strong>{label}:</strong>{" "}
+            {label === "LinkedIn" && m.new_linkedinurl ? (
+              <a href={m.new_linkedinurl} target="_blank" rel="noreferrer">{m.new_linkedinurl}</a>
+            ) : (
+              String(val)
             )}
           </div>
-        )}
+        ))}
       </div>
     </div>
   );
 }
 
-export default function ClusterDetailPanel({
+export default function ContactClusterDetailPanel({
   cluster, primaryId, decisions, hasConfirmedPrimary,
   onSetPrimary, onDecide, onDismissCluster, onToggleDelete, onAccept, onClose,
   onPrev, onNext, onConfirmNext, hasPrev, hasNext,
@@ -95,11 +45,11 @@ export default function ClusterDetailPanel({
   const pending = cluster.members.filter((m) => !m.is_already_merged_away);
   const historical = cluster.members.filter((m) => m.is_already_merged_away);
 
-  function toggleMember(accountid) {
+  function toggleMember(contactid) {
     setExpandedMembers((prev) => {
       const next = new Set(prev);
-      if (next.has(accountid)) next.delete(accountid);
-      else next.add(accountid);
+      if (next.has(contactid)) next.delete(contactid);
+      else next.add(contactid);
       return next;
     });
   }
@@ -136,10 +86,10 @@ export default function ClusterDetailPanel({
 
       <div className="primary-hint">
         {hasConfirmedPrimary ? (
-          <>&#10003; Primary confirmed. Non-primary members you haven't decided are still open below.</>
+          <>&#10003; Primary confirmed. Non-primary members you haven&apos;t decided are still open below.</>
         ) : (
           <>
-            &#9733; The row tagged <span className="suggested-tag">suggested</span> is the algorithm's
+            &#9733; The row tagged <span className="suggested-tag">suggested</span> is the algorithm&apos;s
             proposed primary (pre-selected). Click <strong>Accept suggestion</strong> to confirm it and mark
             the rest as Merge, or pick a different primary / set decisions manually.
           </>
@@ -147,7 +97,7 @@ export default function ClusterDetailPanel({
       </div>
 
       <div className="cluster-bulk-bar">
-        <button onClick={() => onDismissCluster(pending.map((m) => m.accountid))}>
+        <button onClick={() => onDismissCluster(pending.map((m) => m.contactid))}>
           Dismiss entire cluster as false positive
         </button>
       </div>
@@ -160,53 +110,51 @@ export default function ClusterDetailPanel({
               <th>Primary</th>
               <th>Name</th>
               <th>State</th>
-              <th>Contacts</th>
-              <th>Open opps</th>
-              <th>Website</th>
-              <th>City</th>
+              <th>Email</th>
+              <th>Job title</th>
+              <th>Account</th>
               <th>Decision</th>
               <th>Note</th>
             </tr>
           </thead>
           <tbody>
             {pending.map((m) => {
-              const d = decisions[m.accountid] || {};
-              const isPrimary = primaryId === m.accountid;
-              const isOpen = expandedMembers.has(m.accountid);
+              const d = decisions[m.contactid] || {};
+              const isPrimary = primaryId === m.contactid;
+              const isOpen = expandedMembers.has(m.contactid);
               return (
-                <React.Fragment key={m.accountid}>
+                <React.Fragment key={m.contactid}>
                   <tr>
                     <td>
-                      <button className="icon-btn" onClick={() => toggleMember(m.accountid)} aria-label="details">
+                      <button className="icon-btn" onClick={() => toggleMember(m.contactid)} aria-label="details">
                         {isOpen ? "▾" : "▸"}
                       </button>
                     </td>
                     <td>
                       <input
                         type="radio"
-                        name={`primary-${cluster.cluster_id}`}
+                        name={`primary-contact-${cluster.cluster_id}`}
                         checked={isPrimary}
-                        onChange={() => onSetPrimary(m.accountid)}
+                        onChange={() => onSetPrimary(m.contactid)}
                       />
                     </td>
                     <td>
-                      {m.name}
+                      {m.fullname}
                       {Boolean(m.is_suggested_primary) && <span className="suggested-tag"> &#9733; suggested</span>}
                     </td>
                     <td>
-                      <span className={`badge badge-${m.statecode_label.toLowerCase()}`}>{m.statecode_label}</span>
+                      <span className={`badge badge-${(m.statecode_label || "").toLowerCase()}`}>{m.statecode_label}</span>
                     </td>
-                    <td className="col-num">{m.total_contact_count}</td>
-                    <td className="col-num">{m.open_opportunity_count}</td>
-                    <td className="truncate-cell">{m.websiteurl}</td>
-                    <td>{m.address1_city}</td>
+                    <td className="truncate-cell">{m.emailaddress1}</td>
+                    <td className="truncate-cell">{m.jobtitle}</td>
+                    <td className="truncate-cell">{m.parent_account_name || "—"}</td>
                     <td>
                       {isPrimary ? (
                         <em>primary</em>
                       ) : (
                         <select
                           value={d.decision || ""}
-                          onChange={(e) => onDecide(m.accountid, { ...d, decision: e.target.value })}
+                          onChange={(e) => onDecide(m.contactid, { ...d, decision: e.target.value })}
                         >
                           {DECISIONS.map((opt) => (
                             <option key={opt} value={opt}>{opt || "-- decide --"}</option>
@@ -220,13 +168,13 @@ export default function ClusterDetailPanel({
                         className="note-input"
                         value={d.note || ""}
                         placeholder="note..."
-                        onChange={(e) => onDecide(m.accountid, { ...d, note: e.target.value })}
+                        onChange={(e) => onDecide(m.contactid, { ...d, note: e.target.value })}
                       />
                     </td>
                   </tr>
                   {isOpen && (
                     <tr className="member-details-row">
-                      <td colSpan={10}><MemberDetails m={m} /></td>
+                      <td colSpan={9}><MemberDetails m={m} /></td>
                     </tr>
                   )}
                 </React.Fragment>
@@ -257,10 +205,10 @@ export default function ClusterDetailPanel({
                 </thead>
                 <tbody>
                   {historical.map((m) => {
-                    const marked = decisions[m.accountid]?.decision === "Delete";
+                    const marked = decisions[m.contactid]?.decision === "Delete";
                     return (
-                      <tr key={m.accountid}>
-                        <td>{m.name}</td>
+                      <tr key={m.contactid}>
+                        <td>{m.fullname}</td>
                         <td>
                           {m.existing_masterid_name || m.existing_masterid}
                           {Boolean(m.masterid_outside_cluster) && (
@@ -270,7 +218,7 @@ export default function ClusterDetailPanel({
                         <td>
                           <button
                             className={marked ? "delete-btn marked" : "delete-btn"}
-                            onClick={() => onToggleDelete(m.accountid, marked)}
+                            onClick={() => onToggleDelete(m.contactid, marked)}
                           >
                             {marked ? "✓ Marked — undo" : "Mark for deletion"}
                           </button>

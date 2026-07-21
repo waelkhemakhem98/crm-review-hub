@@ -1,17 +1,28 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ClusterTable from "../components/ClusterTable.jsx";
-import ClusterDetailPanel from "../components/ClusterDetailPanel.jsx";
+import ContactClusterDetailPanel from "../components/ContactClusterDetailPanel.jsx";
 import { api } from "../api.js";
 
 const CONFIDENCES = ["High", "Medium", "Low"];
 const CONFIDENCE_RANK = { High: 0, Medium: 1, Low: 2 };
 
-function suggestedPrimaryOf(cluster) {
-  const found = cluster.members.find((m) => m.is_suggested_primary);
-  return found ? found.accountid : null;
+function normalizeCluster(c) {
+  return {
+    ...c,
+    members: (c.members || []).map((m) => ({
+      ...m,
+      name: m.fullname,
+      accountid: m.contactid,
+    })),
+  };
 }
 
-export default function DuplicateAccountsSection({ reviewer }) {
+function suggestedPrimaryOf(cluster) {
+  const found = cluster.members.find((m) => m.is_suggested_primary);
+  return found ? found.contactid : null;
+}
+
+export default function DuplicateContactsSection({ reviewer }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [clusters, setClusters] = useState([]);
@@ -19,19 +30,22 @@ export default function DuplicateAccountsSection({ reviewer }) {
   const [primaryChoices, setPrimaryChoices] = useState({});
   const [search, setSearch] = useState("");
   const [confidenceFilter, setConfidenceFilter] = useState(() => new Set());
-  // Per-signal rules: { [signal]: "include" | "exclude" }. Absent = "any".
   const [signalRules, setSignalRules] = useState(() => ({}));
-  const [decidedFilter, setDecidedFilter] = useState("undecided"); // all | decided | undecided
+  const [decidedFilter, setDecidedFilter] = useState("undecided");
   const [expandedId, setExpandedId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.fetchClusters(), api.fetchDuplicateDecisions(), api.fetchPrimaryChoices()])
+    Promise.all([
+      api.fetchContactClusters(),
+      api.fetchContactDuplicateDecisions(),
+      api.fetchContactPrimaryChoices(),
+    ])
       .then(([c, d, p]) => {
         if (cancelled) return;
-        setClusters(c);
+        setClusters(c.map(normalizeCluster));
         setDecisions(d);
-        setPrimaryChoices(Object.fromEntries(Object.entries(p).map(([cid, row]) => [cid, row.accountid])));
+        setPrimaryChoices(Object.fromEntries(Object.entries(p).map(([cid, row]) => [cid, row.contactid])));
         setLoading(false);
       })
       .catch((err) => {
@@ -51,8 +65,8 @@ export default function DuplicateAccountsSection({ reviewer }) {
   function clusterProgress(cluster) {
     const pending = cluster.members.filter((m) => !m.is_already_merged_away);
     const primaryId = effectivePrimary(cluster);
-    const decidable = pending.filter((m) => m.accountid !== primaryId);
-    const decidedCount = decidable.filter((m) => decisions[m.accountid]?.decision).length;
+    const decidable = pending.filter((m) => m.contactid !== primaryId);
+    const decidedCount = decidable.filter((m) => decisions[m.contactid]?.decision).length;
     const hasConfirmedPrimary = Boolean(primaryChoices[cluster.cluster_id]);
     return {
       pending, primaryId, decidable, decidedCount, hasConfirmedPrimary,
@@ -72,34 +86,33 @@ export default function DuplicateAccountsSection({ reviewer }) {
     return { decidedCount, decidableCount: decidable.length, hasConfirmedPrimary };
   }
 
-  function onSetPrimary(clusterId, accountid) {
-    setPrimaryChoices((prev) => ({ ...prev, [clusterId]: accountid }));
-    api.setPrimaryChoice(clusterId, accountid, reviewer).catch((err) => {
-      console.error("Failed to save primary choice, will not persist on reload:", err);
+  function onSetPrimary(clusterId, contactid) {
+    setPrimaryChoices((prev) => ({ ...prev, [clusterId]: contactid }));
+    api.setContactPrimaryChoice(clusterId, contactid, reviewer).catch((err) => {
+      console.error("Failed to save contact primary choice:", err);
     });
   }
 
-  function onDecide(accountid, patch) {
+  function onDecide(contactid, patch) {
     setDecisions((prev) => ({
       ...prev,
-      [accountid]: { ...prev[accountid], ...patch, reviewer },
+      [contactid]: { ...prev[contactid], ...patch, reviewer },
     }));
-    api.saveDuplicateDecision(accountid, { ...patch, reviewer }).catch((err) => {
-      console.error("Failed to save decision, will not persist on reload:", err);
+    api.saveContactDuplicateDecision(contactid, { ...patch, reviewer }).catch((err) => {
+      console.error("Failed to save contact decision:", err);
     });
   }
 
-  function toggleDelete(accountid, marked) {
-    onDecide(accountid, { decision: marked ? "" : "Delete" });
+  function toggleDelete(contactid, marked) {
+    onDecide(contactid, { decision: marked ? "" : "Delete" });
   }
 
-  // One-click: set the suggested primary + mark every other pending member Merge.
   function acceptSuggestion(cluster) {
     const sugg = suggestedPrimaryOf(cluster);
     if (!sugg) return;
     const targets = cluster.members
-      .filter((m) => !m.is_already_merged_away && m.accountid !== sugg)
-      .map((m) => m.accountid);
+      .filter((m) => !m.is_already_merged_away && m.contactid !== sugg)
+      .map((m) => m.contactid);
     if (cluster.confidence === "Low" &&
       !window.confirm(`Low-confidence cluster: set primary and mark ${targets.length} member(s) as Merge?`)) {
       return;
@@ -108,10 +121,10 @@ export default function DuplicateAccountsSection({ reviewer }) {
     if (targets.length) {
       setDecisions((prev) => {
         const next = { ...prev };
-        for (const aid of targets) next[aid] = { ...next[aid], decision: "Merge", reviewer };
+        for (const id of targets) next[id] = { ...next[id], decision: "Merge", reviewer };
         return next;
       });
-      api.bulkSaveDuplicateDecisions(targets, "Merge", reviewer).catch((err) => {
+      api.bulkSaveContactDuplicateDecisions(targets, "Merge", reviewer).catch((err) => {
         console.error("Accept-suggestion bulk save failed:", err);
       });
     }
@@ -134,7 +147,14 @@ export default function DuplicateAccountsSection({ reviewer }) {
           if (decidedFilter === "inprogress" && status !== "inprogress") return false;
           if (decidedFilter === "notstarted" && status !== "notstarted") return false;
         }
-        if (q && !c.members.some((m) => m.name.toLowerCase().includes(q))) return false;
+        if (q) {
+          const hit = c.members.some((m) =>
+            (m.fullname || "").toLowerCase().includes(q)
+            || (m.emailaddress1 || "").toLowerCase().includes(q)
+            || (m.parent_account_name || "").toLowerCase().includes(q)
+          );
+          if (!hit) return false;
+        }
         return true;
       })
       .sort((a, b) =>
@@ -143,8 +163,6 @@ export default function DuplicateAccountsSection({ reviewer }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clusters, search, confidenceFilter, signalRules, decidedFilter, decisions, primaryChoices]);
 
-  // Distinct signals present across all clusters, for the filter chips. Sorted
-  // so the chip order is stable regardless of which cluster loads first.
   const allSignals = useMemo(() => {
     const set = new Set();
     for (const c of clusters) for (const s of c.signals) set.add(s);
@@ -168,7 +186,6 @@ export default function DuplicateAccountsSection({ reviewer }) {
     [clusters, expandedId]
   );
 
-  // -- navigation over the current filtered+sorted list --
   const filteredIds = filtered.map((c) => c.cluster_id);
   const curIdx = expandedId ? filteredIds.indexOf(expandedId) : -1;
   const hasPrev = curIdx > 0;
@@ -187,7 +204,6 @@ export default function DuplicateAccountsSection({ reviewer }) {
     setExpandedId(null);
   };
 
-  // keyboard shortcuts while a cluster is open (ignored when typing in a field)
   useEffect(() => {
     if (!expandedId) return;
     function onKey(e) {
@@ -212,7 +228,6 @@ export default function DuplicateAccountsSection({ reviewer }) {
     });
   }
 
-  // rule is "include" | "exclude" | "any" ("any" removes the signal's rule).
   function setSignalRule(signal, rule) {
     setSignalRules((prev) => {
       const next = { ...prev };
@@ -226,23 +241,23 @@ export default function DuplicateAccountsSection({ reviewer }) {
     setSignalRules({});
   }
 
-  function dismissCluster(pendingAccountIds, primaryId) {
-    const targets = pendingAccountIds.filter((id) => id !== primaryId);
+  function dismissCluster(pendingContactIds, primaryId) {
+    const targets = pendingContactIds.filter((id) => id !== primaryId);
     if (!window.confirm(`Mark all ${targets.length} pending member(s) in this cluster as "Not a duplicate"?`)) {
       return;
     }
     setDecisions((prev) => {
       const next = { ...prev };
-      for (const aid of targets) next[aid] = { ...next[aid], decision: "Not a duplicate", reviewer };
+      for (const id of targets) next[id] = { ...next[id], decision: "Not a duplicate", reviewer };
       return next;
     });
-    api.bulkSaveDuplicateDecisions(targets, "Not a duplicate", reviewer).catch((err) => {
+    api.bulkSaveContactDuplicateDecisions(targets, "Not a duplicate", reviewer).catch((err) => {
       console.error("Failed to save dismiss-cluster decisions:", err);
     });
   }
 
   if (loading) {
-    return <div className="section-status">Loading duplicate account clusters&hellip;</div>;
+    return <div className="section-status">Loading duplicate contact clusters&hellip;</div>;
   }
   if (loadError) {
     return <div className="section-status section-error">Could not load data: {loadError}</div>;
@@ -268,7 +283,7 @@ export default function DuplicateAccountsSection({ reviewer }) {
         <input
           type="text"
           className="search-input"
-          placeholder="Search account name..."
+          placeholder="Search name, email, or account..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -292,7 +307,7 @@ export default function DuplicateAccountsSection({ reviewer }) {
           <option value="decided">Completed</option>
           <option value="all">All clusters</option>
         </select>
-        <a className="export-btn" href={api.exportDuplicatesXlsxUrl()}>
+        <a className="export-btn" href={api.exportContactDuplicatesXlsxUrl()}>
           Export decisions Excel
         </a>
       </div>
@@ -300,12 +315,12 @@ export default function DuplicateAccountsSection({ reviewer }) {
       <div className="filter-count">{filtered.length} clusters match current filters</div>
 
       {expandedCluster && (
-        <ClusterDetailPanel
+        <ContactClusterDetailPanel
           cluster={expandedCluster}
           primaryId={effectivePrimary(expandedCluster)}
           hasConfirmedPrimary={Boolean(primaryChoices[expandedCluster.cluster_id])}
           decisions={decisions}
-          onSetPrimary={(accountid) => onSetPrimary(expandedCluster.cluster_id, accountid)}
+          onSetPrimary={(contactid) => onSetPrimary(expandedCluster.cluster_id, contactid)}
           onDecide={onDecide}
           onToggleDelete={toggleDelete}
           onDismissCluster={(pendingIds) => dismissCluster(pendingIds, effectivePrimary(expandedCluster))}

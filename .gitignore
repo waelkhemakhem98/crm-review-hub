@@ -21,3 +21,5 @@ backend/seed/*.csv
 # OS / editor
 .DS_Store
 Thumbs.db
+
+/seed_backup*

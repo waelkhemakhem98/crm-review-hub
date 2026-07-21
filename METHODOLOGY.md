@@ -2,6 +2,8 @@
 
 This document explains, in plain terms, **how the tool decides which accounts belong to the same group (cluster)** and **how it suggests which record should be the primary (surviving) account**. It is the companion to the review app's "Duplicate Accounts" section.
 
+For **Duplicate Contacts**, see [`METHODOLOGY_CONTACTS.md`](METHODOLOGY_CONTACTS.md).
+
 The logic lives in [`build_duplicate_clusters.py`](build_duplicate_clusters.py); this document describes what that script does.
 
 ---
@@ -74,17 +76,54 @@ Dataverse's own merge feature has already been used on some accounts. Those "los
 
 ---
 
-## 4. How the suggested primary is generated
+## 4. How the suggested primary is generated (v2)
 
-Within each group, the tool proposes one **pending** member as the primary (surviving) record. It is only a suggestion — always overridable in the app. Members are ranked by these tie-breakers, **in order**:
+Within each group, the tool proposes one **pending** member as the primary (surviving) record for Dataverse merge. It is only a suggestion — always overridable in the app. Confirmed choices in `duplicate_primary_choices` are never overwritten by a rebuild.
 
-1. **Active beats Inactive** — an Active account is preferred over an Inactive one.
-2. **Already a survivor** — if a member is already the `masterid` target of another member in the same group, Dataverse's own merge history already crowned it a survivor once; prefer it.
-3. **Most real engagement** — higher (active contacts + open opportunities).
-4. **Oldest** — earlier `createdon` (more likely the original record).
-5. **Deterministic tiebreak** — lowest account id, purely so the result is reproducible.
+**Pending only:** members with `masterid` set / `is_already_merged_away` are excluded from candidacy (historical stubs).
 
-The first rule that separates two candidates decides it. In the app, that member's radio is pre-selected and tagged **★ suggested**; **"Accept suggestion"** confirms it and marks the rest as *Merge* in one click.
+### Tier A — hard rules (in order)
+
+| # | Rule | Field(s) |
+|---|---|---|
+| A1 | Pending only | `is_already_merged_away`, `existing_masterid` |
+| A2 | Active beats Inactive | `statecode_label` |
+| A3 | Already a survivor in this cluster | `accountid` is the `masterid` target of another member |
+
+If a single candidate remains after A2–A3, it is the primary.
+
+### Tier B — business engagement (first criterion that separates wins)
+
+| # | Criterion | Field(s) |
+|---|---|---|
+| B1 | Open opportunities | `open_opportunity_count`, then `opendeals` |
+| B2 | Active contacts | `active_contact_count` |
+| B3 | Open revenue | `openrevenue` (ignored when all candidates are 0 / blank) |
+| B4 | Total contacts | `total_contact_count` |
+
+### Tier C — data completeness (0–6 points)
+
+One point each if filled (non-placeholder): `websiteurl` (non-generic domain), `telephone1`, `address1_line1`, city+postal together, `address1_country`, `industrycode`. Highest score wins.
+
+### Tier D — age / stability
+
+| # | Criterion | Field |
+|---|---|---|
+| D1 | Oldest | `createdon` ascending |
+| D2 | Most recently touched | `modifiedon` descending (only if createdon within ~1 day) |
+| D3 | Deterministic tiebreak | `accountid` |
+
+### Name guardrail
+
+If the chosen primary has a clearly poorer name than a runner-up (acronym-only vs full legal name, or placeholder) **and** they share the same website domain, the report flags `review_name` — the auto choice is unchanged; the reviewer may invert. Display Title Case is **not** a merge criterion.
+
+### Confidence band (report)
+
+- **A** — sole candidate after Tier A, or clear win on A2/A3 / B1  
+- **B** — win on other engagement (B2–B4)  
+- **C** — win on completeness or age/tiebreak  
+
+In the app, the suggested member's radio is pre-selected (**★ suggested**); **"Accept suggestion"** confirms it and marks the rest as *Merge*. Batch recommendations (with reasons) are produced by `12_recluster_remaining/suggest_primaries.py` → `primary_suggestions.csv`.
 
 ---
 

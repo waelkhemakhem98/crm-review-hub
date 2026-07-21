@@ -112,3 +112,50 @@ def build_duplicates_xlsx() -> bytes:
     df = pd.DataFrame(records)
     df["decision_label"] = df["decision"].replace("", "Undecided")
     return _write_workbook(df, DUPLICATE_DECISION_ORDER)
+
+
+def build_contact_duplicates_xlsx() -> bytes:
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT m.cluster_id, cl.signals, cl.confidence, m.contactid, m.fullname,
+                  m.emailaddress1, m.jobtitle, m.parent_account_name,
+                  m.is_already_merged_away, m.existing_masterid_name,
+                  pc.contactid AS confirmed_primary_contactid,
+                  COALESCE(d.decision, '') AS decision,
+                  COALESCE(d.note, '') AS note,
+                  COALESCE(d.reviewer, '') AS reviewer,
+                  COALESCE(d.decided_at, '') AS decided_at
+           FROM duplicate_contact_cluster_members m
+           JOIN duplicate_contact_clusters cl ON cl.cluster_id = m.cluster_id
+           LEFT JOIN duplicate_contact_decisions d ON d.contactid = m.contactid
+           LEFT JOIN duplicate_contact_primary_choices pc ON pc.cluster_id = m.cluster_id
+           WHERE m.is_already_merged_away = 0
+              OR COALESCE(d.decision, '') != ''"""
+    ).fetchall()
+    conn.close()
+
+    records = []
+    for r in rows:
+        r = dict(r)
+        is_primary = bool(r["confirmed_primary_contactid"]) and r["confirmed_primary_contactid"] == r["contactid"]
+        records.append({
+            "cluster_id": r["cluster_id"],
+            "signals": r["signals"],
+            "confidence": r["confidence"],
+            "contactid": r["contactid"],
+            "fullname": r["fullname"],
+            "emailaddress1": r["emailaddress1"],
+            "jobtitle": r["jobtitle"],
+            "parent_account_name": r["parent_account_name"],
+            "is_already_merged_away": int(r["is_already_merged_away"]),
+            "merged_into": r["existing_masterid_name"] if r["is_already_merged_away"] else "",
+            "is_primary": int(is_primary),
+            "decision": "" if is_primary else r["decision"],
+            "note": r["note"],
+            "reviewer": r["reviewer"],
+            "decided_at": r["decided_at"],
+        })
+
+    df = pd.DataFrame(records)
+    df["decision_label"] = df["decision"].replace("", "Undecided")
+    return _write_workbook(df, DUPLICATE_DECISION_ORDER)

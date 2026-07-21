@@ -2,12 +2,15 @@
 
 Two kinds of tables live in one file:
   - Reference tables (inactive_candidates, account_index, duplicate_clusters,
-    duplicate_cluster_members): rebuilt from the pipeline CSVs any time the
-    data refreshes. build_db.py DROPs and re-INSERTs only these.
+    duplicate_cluster_members, duplicate_contact_clusters,
+    duplicate_contact_cluster_members): rebuilt from the pipeline CSVs any time
+    the data refreshes. build_db.py DROPs and re-INSERTs only these.
   - Decision tables (inactive_decisions, duplicate_decisions,
-    duplicate_primary_choices): the shared mutable state multiple reviewers
-    read/write concurrently. Never touched by a reference-data rebuild --
-    this is what must persist on the Docker volume across image rebuilds.
+    duplicate_primary_choices, duplicate_contact_decisions,
+    duplicate_contact_primary_choices): the shared mutable state multiple
+    reviewers read/write concurrently. Never touched by a reference-data
+    rebuild -- this is what must persist on the Docker volume across image
+    rebuilds.
 """
 from __future__ import annotations
 
@@ -72,6 +75,7 @@ CREATE TABLE IF NOT EXISTS duplicate_cluster_members (
   masterid_outside_cluster INTEGER,
   is_suggested_primary INTEGER,
   active_contact_count INTEGER,
+  total_contact_count INTEGER,
   open_opportunity_count INTEGER,
   websiteurl TEXT,
   address1_line1 TEXT,
@@ -88,6 +92,36 @@ CREATE TABLE IF NOT EXISTS duplicate_cluster_members (
   createdon TEXT,
   PRIMARY KEY (cluster_id, accountid)
 );
+
+CREATE TABLE IF NOT EXISTS duplicate_contact_clusters (
+  cluster_id TEXT PRIMARY KEY,
+  signals TEXT,
+  confidence TEXT,
+  cluster_size INTEGER,
+  pending_count INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS duplicate_contact_cluster_members (
+  cluster_id TEXT,
+  contactid TEXT,
+  fullname TEXT,
+  emailaddress1 TEXT,
+  jobtitle TEXT,
+  parentcustomerid TEXT,
+  parent_account_name TEXT,
+  telephone1 TEXT,
+  new_linkedinurl TEXT,
+  sp_engageid TEXT,
+  statecode_label TEXT,
+  is_already_merged_away INTEGER,
+  existing_masterid TEXT,
+  existing_masterid_name TEXT,
+  masterid_outside_cluster INTEGER,
+  is_suggested_primary INTEGER,
+  kpi_inhowmanyopps INTEGER,
+  createdon TEXT,
+  PRIMARY KEY (cluster_id, contactid)
+);
 """
 
 # Reference tables are rebuilt from CSVs (build_db.py). Listed here so the
@@ -100,6 +134,8 @@ REFERENCE_TABLES = [
     "account_contacts",
     "duplicate_clusters",
     "duplicate_cluster_members",
+    "duplicate_contact_clusters",
+    "duplicate_contact_cluster_members",
 ]
 
 DECISION_SCHEMA = """
@@ -124,6 +160,21 @@ CREATE TABLE IF NOT EXISTS duplicate_decisions (
 CREATE TABLE IF NOT EXISTS duplicate_primary_choices (
   cluster_id TEXT PRIMARY KEY,
   accountid TEXT,
+  reviewer TEXT,
+  decided_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS duplicate_contact_decisions (
+  contactid TEXT PRIMARY KEY,
+  decision TEXT,
+  note TEXT,
+  reviewer TEXT,
+  decided_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS duplicate_contact_primary_choices (
+  cluster_id TEXT PRIMARY KEY,
+  contactid TEXT,
   reviewer TEXT,
   decided_at TEXT
 );

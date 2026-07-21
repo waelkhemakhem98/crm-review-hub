@@ -131,6 +131,14 @@ def load_duplicate_clusters(conn, clusters_path: Path, accounts_full_path: Path)
             "openrevenue": r["openrevenue"] or 0.0,
         }
 
+    # total_contact_count = ALL contacts of the account (active + inactive),
+    # from account_contacts (loaded earlier in this run). This matches the
+    # "Show contacts" list in the app -- unlike active_contact_count, which
+    # counts only active contacts and so differs from the visible list.
+    total_contacts_by_id: dict[str, int] = {}
+    for r in conn.execute("SELECT accountid, COUNT(*) AS n FROM account_contacts GROUP BY accountid"):
+        total_contacts_by_id[r["accountid"]] = r["n"]
+
     with clusters_path.open(encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
 
@@ -161,6 +169,7 @@ def load_duplicate_clusters(conn, clusters_path: Path, accounts_full_path: Path)
             "masterid_outside_cluster": int(r["masterid_outside_cluster"]),
             "is_suggested_primary": int(r["is_suggested_primary"]),
             "active_contact_count": int(r["active_contact_count"]),
+            "total_contact_count": total_contacts_by_id.get(aid, 0),
             "open_opportunity_count": int(r["open_opportunity_count"]),
             "websiteurl": r["websiteurl"],
             "address1_line1": det.get("address1_line1", ""),
@@ -186,15 +195,93 @@ def load_duplicate_clusters(conn, clusters_path: Path, accounts_full_path: Path)
         """INSERT INTO duplicate_cluster_members
            (cluster_id, accountid, name, statecode_label, is_already_merged_away, existing_masterid,
             existing_masterid_name, masterid_outside_cluster, is_suggested_primary,
-            active_contact_count, open_opportunity_count, websiteurl, address1_line1, address1_city,
-            address1_stateorprovince, address1_postalcode, address1_country, telephone1, statuscode,
-            modifiedon, industrycode, opendeals, openrevenue, createdon)
+            active_contact_count, total_contact_count, open_opportunity_count, websiteurl, address1_line1,
+            address1_city, address1_stateorprovince, address1_postalcode, address1_country, telephone1,
+            statuscode, modifiedon, industrycode, opendeals, openrevenue, createdon)
            VALUES (:cluster_id, :accountid, :name, :statecode_label, :is_already_merged_away,
                    :existing_masterid, :existing_masterid_name, :masterid_outside_cluster,
-                   :is_suggested_primary, :active_contact_count, :open_opportunity_count,
+                   :is_suggested_primary, :active_contact_count, :total_contact_count, :open_opportunity_count,
                    :websiteurl, :address1_line1, :address1_city, :address1_stateorprovince,
                    :address1_postalcode, :address1_country, :telephone1, :statuscode,
                    :modifiedon, :industrycode, :opendeals, :openrevenue, :createdon)""",
+        member_rows,
+    )
+    return len(cluster_seen), len(member_rows)
+
+
+def load_duplicate_contact_clusters(conn, clusters_path: Path, accounts_full_path: Path | None = None) -> tuple[int, int]:
+    with clusters_path.open(encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    names_by_id = {norm(r["contactid"]).casefold(): norm(r["fullname"]) for r in rows if norm(r.get("contactid"))}
+
+    # Join parentcustomerid → account name from the full accounts extract.
+    # GUID casing often differs (accounts UPPER, contacts lower), so keys are casefolded.
+    account_names: dict[str, str] = {}
+    if accounts_full_path and accounts_full_path.exists():
+        with accounts_full_path.open(encoding="utf-8-sig", newline="") as f:
+            for row in csv.reader(f):
+                if len(row) < 2 or not row[0].strip():
+                    continue
+                account_names[row[0].strip().casefold()] = norm(row[1])
+
+    conn.execute("DELETE FROM duplicate_contact_clusters")
+    conn.execute("DELETE FROM duplicate_contact_cluster_members")
+
+    cluster_seen: dict[str, dict] = {}
+    member_rows = []
+    for r in rows:
+        cid = r["cluster_id"]
+        if cid not in cluster_seen:
+            cluster_seen[cid] = {
+                "cluster_id": cid,
+                "signals": r["signals"],
+                "confidence": r["confidence"],
+                "cluster_size": int(r["cluster_size"]),
+                "pending_count": int(r["pending_count"]),
+            }
+        mid = norm(r.get("existing_masterid"))
+        parent = norm(r.get("parentcustomerid"))
+        account_name = norm(r.get("parent_account_name"))
+        if not account_name and parent:
+            account_name = account_names.get(parent.casefold(), "")
+        member_rows.append({
+            "cluster_id": cid,
+            "contactid": r["contactid"],
+            "fullname": r["fullname"],
+            "emailaddress1": norm(r.get("emailaddress1")),
+            "jobtitle": norm(r.get("jobtitle")),
+            "parentcustomerid": parent,
+            "parent_account_name": account_name,
+            "telephone1": norm(r.get("telephone1")),
+            "new_linkedinurl": norm(r.get("new_linkedinurl")),
+            "sp_engageid": norm(r.get("sp_engageid")),
+            "statecode_label": norm(r.get("statecode_label")),
+            "is_already_merged_away": parse_int(r.get("is_already_merged_away")),
+            "existing_masterid": mid,
+            "existing_masterid_name": names_by_id.get(mid.casefold(), "") if mid else "",
+            "masterid_outside_cluster": parse_int(r.get("masterid_outside_cluster")),
+            "is_suggested_primary": parse_int(r.get("is_suggested_primary")),
+            "kpi_inhowmanyopps": parse_int(r.get("kpi_inhowmanyopps")),
+            "createdon": norm(r.get("createdon")),
+        })
+
+    conn.executemany(
+        """INSERT INTO duplicate_contact_clusters
+           (cluster_id, signals, confidence, cluster_size, pending_count)
+           VALUES (:cluster_id, :signals, :confidence, :cluster_size, :pending_count)""",
+        list(cluster_seen.values()),
+    )
+    conn.executemany(
+        """INSERT INTO duplicate_contact_cluster_members
+           (cluster_id, contactid, fullname, emailaddress1, jobtitle, parentcustomerid,
+            parent_account_name, telephone1, new_linkedinurl, sp_engageid, statecode_label,
+            is_already_merged_away, existing_masterid, existing_masterid_name,
+            masterid_outside_cluster, is_suggested_primary, kpi_inhowmanyopps, createdon)
+           VALUES (:cluster_id, :contactid, :fullname, :emailaddress1, :jobtitle, :parentcustomerid,
+                   :parent_account_name, :telephone1, :new_linkedinurl, :sp_engageid, :statecode_label,
+                   :is_already_merged_away, :existing_masterid, :existing_masterid_name,
+                   :masterid_outside_cluster, :is_suggested_primary, :kpi_inhowmanyopps, :createdon)""",
         member_rows,
     )
     return len(cluster_seen), len(member_rows)
@@ -217,6 +304,12 @@ def main() -> int:
     n_clusters, n_members = load_duplicate_clusters(
         conn, args.seed_dir / "duplicate_accounts_candidates.csv", args.seed_dir / "accounts_full_extract.csv"
     )
+    contact_seed = args.seed_dir / "duplicate_contacts_candidates.csv"
+    n_c_clusters, n_c_members = (0, 0)
+    if contact_seed.exists():
+        n_c_clusters, n_c_members = load_duplicate_contact_clusters(
+            conn, contact_seed, args.seed_dir / "accounts_full_extract.csv",
+        )
     conn.commit()
     conn.close()
 
@@ -225,6 +318,8 @@ def main() -> int:
     print(f"account_contacts    : {n_contacts}")
     print(f"duplicate_clusters  : {n_clusters}")
     print(f"cluster_members     : {n_members}")
+    print(f"contact_dup_clusters: {n_c_clusters}")
+    print(f"contact_dup_members : {n_c_members}")
     return 0
 
 

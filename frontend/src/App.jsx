@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import InactiveAccountsSection from "./sections/InactiveAccountsSection.jsx";
 import DuplicateAccountsSection from "./sections/DuplicateAccountsSection.jsx";
+import DuplicateContactsSection from "./sections/DuplicateContactsSection.jsx";
 import { safeGet, safeSet } from "./storage.js";
 
 const TAB_KEY = "review_app_active_tab_v1";
@@ -31,6 +32,12 @@ export default function App() {
           Duplicate Accounts
         </button>
         <button
+          className={`tab-btn ${tab === "contact-duplicates" ? "tab-btn-active" : ""}`}
+          onClick={() => switchTab("contact-duplicates")}
+        >
+          Duplicate Contacts
+        </button>
+        <button
           className={`tab-btn ${tab === "inactive" ? "tab-btn-active" : ""}`}
           onClick={() => switchTab("inactive")}
         >
@@ -39,6 +46,7 @@ export default function App() {
       </div>
 
       {tab === "duplicates" && <DuplicateAccountsSection reviewer={REVIEWER} />}
+      {tab === "contact-duplicates" && <DuplicateContactsSection reviewer={REVIEWER} />}
       {tab === "inactive" && <InactiveAccountsSection reviewer={REVIEWER} />}
     </div>
   );

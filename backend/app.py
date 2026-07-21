@@ -297,3 +297,143 @@ def export_duplicates_xlsx():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=duplicate_accounts_decisions.xlsx"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Duplicate contacts
+# ---------------------------------------------------------------------------
+
+@app.get("/api/contact-duplicates/clusters")
+def get_contact_clusters():
+    conn = get_connection()
+    clusters = conn.execute(
+        "SELECT * FROM duplicate_contact_clusters ORDER BY cluster_size DESC, cluster_id"
+    ).fetchall()
+    members = conn.execute("SELECT * FROM duplicate_contact_cluster_members").fetchall()
+    conn.close()
+
+    by_cluster: dict[str, list[dict]] = {}
+    for m in members:
+        by_cluster.setdefault(m["cluster_id"], []).append(dict(m))
+
+    result = []
+    for c in clusters:
+        c = dict(c)
+        c["signals"] = c["signals"].split(";") if c["signals"] else []
+        c["members"] = by_cluster.get(c["cluster_id"], [])
+        result.append(c)
+    return result
+
+
+@app.get("/api/contact-duplicates/decisions")
+def get_contact_duplicate_decisions():
+    conn = get_connection()
+    rows = conn.execute("SELECT * FROM duplicate_contact_decisions").fetchall()
+    conn.close()
+    return {r["contactid"]: dict(r) for r in rows}
+
+
+@app.get("/api/contact-duplicates/primary-choices")
+def get_contact_primary_choices():
+    conn = get_connection()
+    rows = conn.execute("SELECT * FROM duplicate_contact_primary_choices").fetchall()
+    conn.close()
+    return {r["cluster_id"]: dict(r) for r in rows}
+
+
+class ContactDuplicateDecisionPatch(BaseModel):
+    decision: Optional[str] = None
+    note: Optional[str] = None
+    reviewer: Optional[str] = None
+
+
+@app.put("/api/contact-duplicates/decisions/{contactid}")
+def put_contact_duplicate_decision(contactid: str, patch: ContactDuplicateDecisionPatch):
+    conn = get_connection()
+    existing = conn.execute(
+        "SELECT * FROM duplicate_contact_decisions WHERE contactid = ?", (contactid,)
+    ).fetchone()
+    existing = dict(existing) if existing else {}
+    merged = _merge_patch(existing, patch.model_dump(), {"decision": "", "note": "", "reviewer": ""})
+    merged["contactid"] = contactid
+    merged["decided_at"] = now_iso()
+    conn.execute(
+        """INSERT INTO duplicate_contact_decisions (contactid, decision, note, reviewer, decided_at)
+           VALUES (:contactid, :decision, :note, :reviewer, :decided_at)
+           ON CONFLICT(contactid) DO UPDATE SET
+             decision=excluded.decision, note=excluded.note, reviewer=excluded.reviewer,
+             decided_at=excluded.decided_at""",
+        merged,
+    )
+    conn.commit()
+    conn.close()
+    return merged
+
+
+class ContactDuplicateBulkRequest(BaseModel):
+    contactids: list[str]
+    decision: str
+    reviewer: str
+
+
+@app.post("/api/contact-duplicates/decisions/bulk")
+def bulk_contact_duplicate_decisions(req: ContactDuplicateBulkRequest):
+    conn = get_connection()
+    now = now_iso()
+    for contactid in req.contactids:
+        existing = conn.execute(
+            "SELECT * FROM duplicate_contact_decisions WHERE contactid = ?", (contactid,)
+        ).fetchone()
+        existing = dict(existing) if existing else {}
+        conn.execute(
+            """INSERT INTO duplicate_contact_decisions (contactid, decision, note, reviewer, decided_at)
+               VALUES (:contactid, :decision, :note, :reviewer, :decided_at)
+               ON CONFLICT(contactid) DO UPDATE SET
+                 decision=excluded.decision, reviewer=excluded.reviewer, decided_at=excluded.decided_at""",
+            {
+                "contactid": contactid,
+                "decision": req.decision,
+                "note": existing.get("note", ""),
+                "reviewer": req.reviewer,
+                "decided_at": now,
+            },
+        )
+    conn.commit()
+    conn.close()
+    return {"updated": len(req.contactids)}
+
+
+class ContactPrimaryChoiceRequest(BaseModel):
+    contactid: str
+    reviewer: str
+
+
+@app.put("/api/contact-duplicates/primary-choices/{cluster_id}")
+def set_contact_primary_choice(cluster_id: str, req: ContactPrimaryChoiceRequest):
+    conn = get_connection()
+    row = {
+        "cluster_id": cluster_id,
+        "contactid": req.contactid,
+        "reviewer": req.reviewer,
+        "decided_at": now_iso(),
+    }
+    conn.execute(
+        """INSERT INTO duplicate_contact_primary_choices (cluster_id, contactid, reviewer, decided_at)
+           VALUES (:cluster_id, :contactid, :reviewer, :decided_at)
+           ON CONFLICT(cluster_id) DO UPDATE SET
+             contactid=excluded.contactid, reviewer=excluded.reviewer, decided_at=excluded.decided_at""",
+        row,
+    )
+    conn.commit()
+    conn.close()
+    return row
+
+
+@app.get("/api/contact-duplicates/export.xlsx")
+def export_contact_duplicates_xlsx():
+    content = export_xlsx.build_contact_duplicates_xlsx()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=duplicate_contacts_decisions.xlsx"},
+    )

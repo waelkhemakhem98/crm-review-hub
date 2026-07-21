@@ -58,4 +58,16 @@ export const api = {
   setPrimaryChoice: (clusterId, accountid, reviewer) =>
     putJSON(`/api/duplicates/primary-choices/${clusterId}`, { accountid, reviewer }),
   exportDuplicatesXlsxUrl: () => url("/api/duplicates/export.xlsx"),
+
+  // -- duplicate contacts --
+  fetchContactClusters: () => getJSON("/api/contact-duplicates/clusters"),
+  fetchContactDuplicateDecisions: () => getJSON("/api/contact-duplicates/decisions"),
+  fetchContactPrimaryChoices: () => getJSON("/api/contact-duplicates/primary-choices"),
+  saveContactDuplicateDecision: (contactid, patch) =>
+    putJSON(`/api/contact-duplicates/decisions/${contactid}`, patch),
+  bulkSaveContactDuplicateDecisions: (contactids, decision, reviewer) =>
+    postJSON("/api/contact-duplicates/decisions/bulk", { contactids, decision, reviewer }),
+  setContactPrimaryChoice: (clusterId, contactid, reviewer) =>
+    putJSON(`/api/contact-duplicates/primary-choices/${clusterId}`, { contactid, reviewer }),
+  exportContactDuplicatesXlsxUrl: () => url("/api/contact-duplicates/export.xlsx"),
 };
